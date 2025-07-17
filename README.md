@@ -1,15 +1,14 @@
 # Movie Sync
 
-**Can be used on any files, not just movies!**
+**Can be used on any files, not just movies! (that totally aren't on a hosting site on a server somewhere...)**
 
-A bash script to **deduplicate** and **sync** movie directories between local and remote machines. Easy UI in the terminal to simplify user transfers.
-
-
+A bash script to **deduplicate** and **sync** directories between local and remote machines. Easy UI in the terminal to simplify user transfers.
 
 **Do you**
- - Hate downloading/using another program to only FTP?
- - Having duplicates in your data?
- - Need to move files from your local to a remote server?
+
+- Hate downloading/using another program to only FTP?
+- Having duplicates in your data?
+- Need to move files from your local to a remote server?
 
 Well strap in because Movie Sync has got you covered!
 
