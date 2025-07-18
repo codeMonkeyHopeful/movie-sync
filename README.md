@@ -95,6 +95,18 @@ Run in background with nohup? [Y/n]: n
 
 ---
 
+## Screenshots
+
+**Deduplication (Dry Run):**
+
+![Deduplication Screenshot](images/dedupe.png)
+
+**Rsync Syncing to Remote:**
+
+![Sync Screenshot](images/sync.png)
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) file.
