@@ -4,6 +4,8 @@
 
 A bash script to **deduplicate** and **sync** directories between local and remote machines. Easy UI in the terminal to simplify user transfers.
 
+**Bonus**: Includes [optional media formatter](#media-formatter-bonus-tool) for clean file naming!
+
 **Do you**
 
 - Hate downloading/using another program to only FTP?
@@ -30,6 +32,7 @@ Well strap in because Movie Sync has got you covered!
 - `rsync` installed
 - SSH access configured for remote sync
 - Optional: `sudo` rights on remote machine if you want to sync using remote sudo
+- Optional: Python 3 for the media formatter script
 
 ---
 
@@ -41,7 +44,13 @@ Make the script executable:
 chmod +x movie-sync.sh
 ```
 
-Run the script:
+**Optional**: Format your media files first:
+
+```bash
+python3 format.py
+```
+
+Run the main script:
 
 ```bash
 ./movie-sync.sh [--log]
@@ -72,7 +81,13 @@ If logging is enabled with `--log`:
 
 ## Example
 
-Run with logging enabled:
+**Format media files first (optional):**
+
+```bash
+python3 format.py
+```
+
+**Then run with logging enabled:**
 
 ```bash
 ./movie-sync.sh --log
@@ -84,7 +99,6 @@ Sample interaction:
 Run deduplication before syncing? [y/N]: y
 Enter path to dedupe (e.g. /mnt/hdd/): /mnt/hdd/
 Dry run dedupe (no deletions)? [y/N]: y
-
 Choose an option [1 or 2]: 1
 Enter the full LOCAL source path: /mnt/hdd/
 Enter the REMOTE destination path (e.g. user@host:/path): user@192.168.0.2:/mnt/backup/Movies
@@ -97,13 +111,52 @@ Run in background with nohup? [Y/n]: n
 
 ## Screenshots
 
-**Deduplication (Dry Run):**
+**Media Formatter in Action:**
 
+```
+🎬 Processing Media Directory: /mnt/movies
+============================================================
+├── 📁 Awesome.Action.Flick.2022.1080p.WEBRip → Awesome Action Flick (2022)
+│   └── 🎥 Awesome.Action.Flick.2022.1080p.WEBRip.mp4 → Awesome Action Flick (2022).mp4
+│   📝 Subtitle: Awesome.Action.Flick.2022.srt → Awesome Action Flick (2022).srt
+│   🗑️  Removed: sample.txt
+└── ⚠️  Found truncated year (20) - using 2020 as default
+    📁 Comedy.Special.(20) → Comedy Special (2020)
+    └── 🎥 Comedy.Special.(20).mkv → Comedy Special (2020).mkv
+```
+
+**Deduplication (Dry Run):**
 ![Deduplication Screenshot](images/dedupe.png)
 
 **Rsync Syncing to Remote:**
-
 ![Sync Screenshot](images/sync.png)
+
+---
+
+## Media Formatter (Bonus Tool)
+
+**🎬 Format your media files to standard naming convention before syncing!**
+
+We've included an optional Python script `format.py` that formats your movie files and folders to the standard media naming convention: `Title (Year)`. This is super helpful to run **before** using the main sync script to ensure your media library is properly organized.
+
+### What it does:
+
+- ✅ Renames files and folders to `Title (Year)` format (e.g., `Action Hero Movie (2019)`)
+- ✅ Handles truncated years like `(20)` → `(2020)` with smart defaults
+- ✅ Organizes subtitle files and creates `Subs/` folders when needed
+- ✅ Removes unwanted files (`.txt`, `.url`, `.jpg`, etc.)
+- ✅ Cleans up release group tags (`[YTS]`, `[RARBG]`, etc.)
+- ✅ Shows a nice tree view of changes being made
+
+### Quick usage:
+
+```bash
+python3 format.py
+```
+
+Then enter your media directory path and confirm. The script will show you exactly what it's going to change before doing it.
+
+**Tip**: Run this on your media files first, then use the main sync script to transfer your nicely formatted collection!
 
 ---
 
