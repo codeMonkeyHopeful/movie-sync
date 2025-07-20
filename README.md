@@ -11,6 +11,7 @@ A bash script to **deduplicate** and **sync** directories between local and remo
 - Hate downloading/using another program to only FTP?
 - Having duplicates in your data?
 - Need to move files from your local to a remote server?
+- Want to automatically clean up local files after successful transfers?
 
 Well strap in because Movie Sync has got you covered!
 
@@ -20,6 +21,8 @@ Well strap in because Movie Sync has got you covered!
 
 - Deduplicate files in a directory using [`rdfind`](https://github.com/paulharry/rdfind) with optional dry-run and logging
 - Sync files **to** or **from** a remote server using `rsync` with optional dry-run, sudo on remote, background execution, and logging
+- **NEW**: Automatically delete original files after successful transfer (with smart failure detection)
+- **NEW**: Intelligent transfer analysis - only deletes files that were successfully transferred
 - All functionality combined in a single interactive script
 - Logging for both deduplication and sync controlled by a single `--log` CLI flag
 
@@ -64,9 +67,37 @@ The script will prompt you to:
 1. Run deduplication (yes/no) and configure dry-run for dedupe
 2. Choose Push (local → remote) or Pull (remote → local) mode
 3. Enter source and destination paths
-4. Choose dry-run for sync
-5. Use sudo on remote side (yes/no)
-6. Run sync in background (yes/no)
+4. **NEW**: Choose whether to delete original files after successful transfer
+5. Choose dry-run for sync
+6. Use sudo on remote side (yes/no)
+7. Run sync in background (yes/no)
+
+---
+
+## Automatic File Deletion
+
+The script now includes intelligent file deletion after successful transfers:
+
+- **Smart Analysis**: Parses rsync output to identify which files were successfully transferred vs. failed
+- **Safety First**: Only deletes files that were confirmed as successfully transferred
+- **Push Operations Only**: Deletion only works for push operations (local → remote) to avoid accidental data loss
+- **Detailed Reporting**: Shows exactly what was deleted and what was kept due to transfer failures
+- **Dry Run Safe**: Deletion is automatically disabled during dry runs
+
+### Deletion Summary Example:
+
+```
+🗑️ DELETION SUMMARY:
+============================================================
+✅ Successfully transferred and deleting:
+├── 🗑️ Deleted folder: Movie Title (2023)
+└── 🗑️ Deleted file: Another Movie (2024).mp4
+
+❌ Transfer failures - NOT deleted (kept on local machine):
+└── ❌ Kept due to transfer failure: failed-file.mkv
+
+⚠️ Summary: 2 items deleted, 1 items kept due to failures.
+```
 
 ---
 
@@ -76,6 +107,7 @@ If logging is enabled with `--log`:
 
 - Deduplication logs are saved as `dedupe_YYYY-MM-DD_HH-MM-SS.txt`
 - Rsync logs are saved as `movie_sync_YYYY-MM-DD_HH-MM-SS.log`
+- Deletion operations are also logged to the rsync log file when enabled
 
 ---
 
@@ -102,6 +134,7 @@ Dry run dedupe (no deletions)? [y/N]: y
 Choose an option [1 or 2]: 1
 Enter the full LOCAL source path: /mnt/hdd/
 Enter the REMOTE destination path (e.g. user@host:/path): user@192.168.0.2:/mnt/backup/Movies
+Delete original files after successful transfer? [y/N]: y
 Do a dry run first? [y/N]: n
 Use sudo on the REMOTE side? [y/N]: n
 Run in background with nohup? [Y/n]: n
@@ -131,6 +164,19 @@ Run in background with nohup? [Y/n]: n
 **Rsync Syncing to Remote:**
 ![Sync Screenshot](images/sync.png)
 
+**NEW - Automatic Deletion After Transfer:**
+
+```
+📋 Analyzing transfer results for deletion processing...
+🗑️ DELETION SUMMARY:
+============================================================
+✅ Successfully transferred and deleting:
+├── 🗑️ Deleted folder: It Feeds (2025)
+└── 🗑️ Deleted file: Movie File (2024).mp4
+
+⚠️ Summary: 2 items deleted, 0 items kept due to failures.
+```
+
 ---
 
 ## Media Formatter (Bonus Tool)
@@ -157,6 +203,16 @@ python3 format.py
 Then enter your media directory path and confirm. The script will show you exactly what it's going to change before doing it.
 
 **Tip**: Run this on your media files first, then use the main sync script to transfer your nicely formatted collection!
+
+---
+
+## Safety Features
+
+- **Dry Run Protection**: Deletion is automatically disabled during dry runs
+- **Transfer Verification**: Only files confirmed as successfully transferred are deleted
+- **Push-Only Deletion**: Deletion only works for push operations (local → remote) to prevent accidental data loss
+- **Failure Detection**: Files that fail to transfer are kept on the local machine
+- **Detailed Logging**: All deletion operations are logged when logging is enabled
 
 ---
 
