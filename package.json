@@ -1,0 +1,17 @@
+{
+  "name": "movie-sync",
+  "version": "2.0.0",
+  "description": "A bash script to deduplicate and sync directories between local and remote machines. Easy UI in the terminal to simplify user transfers. ",
+  "homepage": "https://github.com/codeMonkeyHopeful/movie-sync#readme",
+  "bugs": {
+    "url": "https://github.com/codeMonkeyHopeful/movie-sync/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codeMonkeyHopeful/movie-sync.git"
+  },
+  "license": "MIT",
+  "author": "codeMonkeyHopeful",
+  "type": "bash",
+  "main": ""
+}
