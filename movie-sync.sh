@@ -22,6 +22,170 @@ dedupe() {
   fi
 }
 
+# === ANALYZE RSYNC OUTPUT FUNCTION ===
+analyze_rsync_output() {
+  local rsync_output_file=$1
+  local source_path=$2
+  declare -a successful_transfers=()
+  declare -a failed_transfers=()
+
+  if [[ ! -f "$rsync_output_file" ]]; then
+    echo "⚠️ Warning: Could not find rsync output file for analysis"
+    return 1
+  fi
+
+  echo "🔍 Debug: Analyzing rsync output from: $rsync_output_file"
+
+  # Parse rsync output to identify successful vs failed transfers
+  local in_file_list=false
+  while IFS= read -r line; do
+    # Skip empty lines
+    [[ -z "$line" ]] && continue
+
+    # Detect start of file list
+    if [[ "$line" == "sending incremental file list" ]]; then
+      in_file_list=true
+      continue
+    fi
+
+    # Skip lines before file list starts
+    if [[ "$in_file_list" == false ]]; then
+      continue
+    fi
+
+    # Skip summary lines at the end
+    if [[ "$line" =~ ^sent\ [0-9] ]] || [[ "$line" =~ ^total\ size ]] || [[ "$line" =~ speedup ]]; then
+      break
+    fi
+
+    # Look for error lines
+    if [[ "$line" =~ rsync:.*error ]] || [[ "$line" =~ failed ]] || [[ "$line" =~ "cannot" ]]; then
+      failed_transfers+=("$line")
+      echo "❌ Found error: $line"
+      continue
+    fi
+
+    # Look for file/directory entries
+    # Files with transfer info look like: "filename    size  100%  speed  time (xfr#n, to-chk=n/n)"
+    # Directories look like: "dirname/"
+    # Plain files without size info are just listed as: "filename"
+
+    if [[ "$line" =~ ^[[:space:]]*(.+/)$ ]]; then
+      # Directory entry (ends with /)
+      filename="${BASH_REMATCH[1]}"
+      # Remove trailing slash for directory name
+      filename="${filename%/}"
+      if [[ -n "$filename" && "$filename" != "./" && "$filename" != "." ]]; then
+        successful_transfers+=("$filename")
+        echo "📁 Found directory: $filename"
+      fi
+    elif [[ "$line" =~ ^[[:space:]]*([^[:space:]]+.*[^/])$ ]] && [[ ! "$line" =~ "100%" ]]; then
+      # File entry without transfer stats (just filename)
+      filename="${BASH_REMATCH[1]}"
+      if [[ -n "$filename" && "$filename" != "./" && "$filename" != "." ]]; then
+        successful_transfers+=("$filename")
+        echo "📄 Found file: $filename"
+      fi
+    elif [[ "$line" =~ ^[[:space:]]*([^[:space:]]+.+)[[:space:]]+[0-9.,]+[KMGT]?[[:space:]]+100% ]]; then
+      # File entry with transfer stats (has size and 100%)
+      filename="${BASH_REMATCH[1]}"
+      if [[ -n "$filename" && "$filename" != "./" && "$filename" != "." ]]; then
+        successful_transfers+=("$filename")
+        echo "📄 Found transferred file: $filename"
+      fi
+    fi
+  done < "$rsync_output_file"
+
+  echo "🔍 Debug: Found ${#successful_transfers[@]} successful transfers, ${#failed_transfers[@]} failures"
+
+  # Export arrays for use in main script
+  printf '%s\n' "${successful_transfers[@]}" > /tmp/successful_transfers.txt
+  printf '%s\n' "${failed_transfers[@]}" > /tmp/failed_transfers.txt
+
+  # Debug output
+  if [[ ${#successful_transfers[@]} -gt 0 ]]; then
+    echo "🔍 Debug: Successful transfers written to /tmp/successful_transfers.txt:"
+    cat /tmp/successful_transfers.txt
+  fi
+}
+
+# === DELETE SUCCESSFUL TRANSFERS FUNCTION ===
+delete_successful_files() {
+  local source_path=$1
+  local logfile=$2
+  declare -a deleted_items=()
+  declare -a kept_items=()
+  local delete_count=0
+  local keep_count=0
+
+  # Function to output to both stdout and logfile
+  log_and_echo() {
+    local message="$1"
+    echo "$message"
+    if [[ -n "$logfile" ]] && [[ -n "$2" ]]; then
+      echo "$message" >> "$2"
+    fi
+  }
+
+  log_and_echo "🗑️ DELETION SUMMARY:"
+  log_and_echo "============================================================"
+
+  if [[ ! -f /tmp/successful_transfers.txt ]]; then
+    log_and_echo "❌ No transfer data available for deletion analysis"
+    return 1
+  fi
+
+  log_and_echo "✅ Successfully transferred and deleting:"
+
+  # Read successful transfers and attempt deletion
+  while IFS= read -r item; do
+    [[ -z "$item" ]] && continue
+
+    local full_path="$source_path/$item"
+
+    if [[ -d "$full_path" ]]; then
+      # It's a directory
+      if rm -rf "$full_path" 2>/dev/null; then
+        log_and_echo "├── 🗑️ Deleted folder: $item"
+        deleted_items+=("$item")
+        ((delete_count++))
+      else
+        log_and_echo "├── ❌ Failed to delete folder: $item"
+        kept_items+=("$item")
+        ((keep_count++))
+      fi
+    elif [[ -f "$full_path" ]]; then
+      # It's a file
+      if rm "$full_path" 2>/dev/null; then
+        log_and_echo "└── 🗑️ Deleted file: $item"
+        deleted_items+=("$item")
+        ((delete_count++))
+      else
+        log_and_echo "└── ❌ Failed to delete file: $item"
+        kept_items+=("$item")
+        ((keep_count++))
+      fi
+    fi
+  done < /tmp/successful_transfers.txt
+
+  # Show items kept due to transfer failures
+  if [[ -f /tmp/failed_transfers.txt ]] && [[ -s /tmp/failed_transfers.txt ]]; then
+    log_and_echo ""
+    log_and_echo "❌ Transfer failures - NOT deleted (kept on local machine):"
+    while IFS= read -r failure; do
+      [[ -z "$failure" ]] && continue
+      log_and_echo "└── ❌ Kept due to transfer failure: $failure"
+      ((keep_count++))
+    done < /tmp/failed_transfers.txt
+  fi
+
+  log_and_echo ""
+  log_and_echo "⚠️ Summary: $delete_count items deleted, $keep_count items kept due to failures."
+
+  # Cleanup temp files
+  rm -f /tmp/successful_transfers.txt /tmp/failed_transfers.txt
+}
+
 # === RUN DEDUPE PROMPT ===
 echo
 read -rp "Run deduplication before syncing? [y/N]: " run_dedupe
@@ -83,6 +247,11 @@ if [[ "$choice" == "1" ]]; then
   echo
   echo "You chose to PUSH files to the server."
   read -rp "Enter the full LOCAL source path: " source_path
+  # Auto-adjust trailing slash for directories (rsync behavior optimization)
+  if [[ -d "$source_path" ]] && [[ "$source_path" != */ ]]; then
+    source_path="$source_path/"
+    echo "📁 Detected directory - adjusted path to: $source_path"
+  fi
   read -rp "Enter the REMOTE destination path (e.g. user@192.168.0.99:/mnt/hdd/): " destination_path
 
 elif [[ "$choice" == "2" ]]; then
@@ -90,10 +259,26 @@ elif [[ "$choice" == "2" ]]; then
   echo "You chose to PULL files from the server."
   read -rp "Enter the REMOTE source path (e.g. user@192.168.0.100:/home/jasin/Movies/): " source_path
   read -rp "Enter the LOCAL destination path: " destination_path
+  # Auto-adjust trailing slash for local destination directories
+  if [[ -d "$destination_path" ]] && [[ "$destination_path" != */ ]]; then
+    destination_path="$destination_path/"
+    echo "📁 Detected directory - adjusted path to: $destination_path"
+  fi
 
 else
   echo "Invalid option. Please run the script again and choose 1 or 2."
   exit 1
+fi
+
+# === NEW: DELETE ORIGINAL FILES PROMPT ===
+echo
+read -rp "Delete original files after successful transfer? [y/N]: " delete_originals
+delete_after_transfer=false
+if [[ "$delete_originals" =~ ^[Yy]$ ]]; then
+  delete_after_transfer=true
+  echo "🗑️ Will delete originals after successful transfer"
+else
+  echo "📁 Will keep original files after transfer"
 fi
 
 echo
@@ -102,6 +287,10 @@ dry_run_flag=""
 if [[ "$dry_run_choice" =~ ^[Yy]$ ]]; then
   dry_run_flag="--dry-run"
   echo "Performing dry run..."
+  if $delete_after_transfer; then
+    echo "⚠️ Note: Dry run mode - no files will be deleted regardless of delete setting"
+    delete_after_transfer=false
+  fi
 else
   echo "Proceeding with real transfer..."
 fi
@@ -113,15 +302,42 @@ if [[ "$remote_sudo_choice" =~ ^[Yy]$ ]]; then
   remote_sudo_flag=(--rsync-path="sudo rsync")
 fi
 
-timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
-logfile="movie_sync_$timestamp.log"
-
 echo
 read -rp "Run in background with nohup? [Y/n]: " bg_choice
 run_in_background=true
+create_logfile=false
+logfile=""
+
 if [[ "$bg_choice" =~ ^[Nn]$ ]]; then
   run_in_background=false
+  create_logfile=false
+  echo "Will run in foreground with output to screen only"
+else
+  echo
+  read -rp "Log background process to file? [y/N]: " log_choice
+  if [[ "$log_choice" =~ ^[Yy]$ ]]; then
+    create_logfile=true
+    timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
+    logfile="movie_sync_$timestamp.log"
+    echo "Will run in background with logging to: $logfile"
+  else
+    create_logfile=false
+    echo "Will run in background with no logging (silent mode)"
+  fi
 fi
+
+# === DISPLAY PROCESSING INFO ===
+echo
+echo "🎬 Processing Jellyfin Media Directory: $source_path"
+if [[ "$choice" == "1" ]]; then
+  echo "📤 Server destination: $destination_path"
+else
+  echo "📥 Local destination: $destination_path"
+fi
+if $delete_after_transfer; then
+  echo "🗑️ Will delete originals after successful transfer"
+fi
+echo "============================================================"
 
 echo
 echo -e "Legend: \033[1;34mInfo\033[0m | \033[1;32mSuccess\033[0m | \033[1;31mError/Deletion\033[0m"
@@ -143,20 +359,83 @@ printf "rsync_args: '%s'\n" "${rsync_args[@]}"
 echo
 
 # === EXECUTE SYNC ===
+rsync_exit_code=0
+temp_rsync_output=""
+
 if $run_in_background; then
   echo "Running in background with nohup..."
-  if $enable_logging; then
+  if $create_logfile; then
     nohup rsync "${rsync_args[@]}" > "$logfile" 2>&1 &
-    echo "Command is running in the background. You can monitor progress with:"
+    rsync_pid=$!
+    echo "Command is running in the background (PID: $rsync_pid). You can monitor progress with:"
     echo "  tail -f $logfile"
+    temp_rsync_output="$logfile"
+
+    if $delete_after_transfer; then
+      echo
+      echo "⏳ Waiting for rsync to complete before processing deletions..."
+      wait $rsync_pid
+      rsync_exit_code=$?
+    fi
   else
-    nohup rsync "${rsync_args[@]}" &
-    echo "Command is running in the background (no logging)."
+    # Even in silent mode, capture output to temp file for deletion analysis if needed
+    if $delete_after_transfer; then
+      temp_rsync_output="/tmp/rsync_output_$(date +%s).txt"
+      nohup rsync "${rsync_args[@]}" > "$temp_rsync_output" 2>&1 &
+      rsync_pid=$!
+      echo "Command is running in the background silently (PID: $rsync_pid)."
+      echo
+      echo "⏳ Waiting for rsync to complete before processing deletions..."
+      wait $rsync_pid
+      rsync_exit_code=$?
+    else
+      nohup rsync "${rsync_args[@]}" >/dev/null 2>&1 &
+      rsync_pid=$!
+      echo "Command is running in the background silently (PID: $rsync_pid, no logging)."
+    fi
   fi
 else
-  if $enable_logging; then
-    rsync "${rsync_args[@]}" | tee "$logfile"
+  # Foreground mode - capture output to temp file for deletion analysis if needed
+  if $delete_after_transfer; then
+    temp_rsync_output="/tmp/rsync_output_$(date +%s).txt"
+    rsync "${rsync_args[@]}" | tee "$temp_rsync_output"
+    rsync_exit_code=${PIPESTATUS[0]}
   else
     rsync "${rsync_args[@]}"
+    rsync_exit_code=$?
   fi
 fi
+
+# === HANDLE POST-SYNC DELETION ===
+if $delete_after_transfer && [[ $rsync_exit_code -eq 0 ]]; then
+  echo
+  echo "📋 Analyzing transfer results for deletion processing..."
+
+  # Only proceed with deletion for push operations (choice 1) since we're deleting from local
+  if [[ "$choice" == "1" ]]; then
+    if [[ -n "$temp_rsync_output" ]] && [[ -f "$temp_rsync_output" ]]; then
+      analyze_rsync_output "$temp_rsync_output" "$source_path"
+      delete_successful_files "$source_path" "$logfile"
+
+      # Cleanup temp file if it's not the user's log file
+      if [[ "$temp_rsync_output" != "$logfile" ]]; then
+        rm -f "$temp_rsync_output"
+      fi
+    else
+      echo "⚠️ No rsync output available for deletion analysis."
+    fi
+  else
+    echo "⚠️ Note: Deletion only supported for push operations (local → remote)"
+  fi
+elif $delete_after_transfer && [[ $rsync_exit_code -ne 0 ]]; then
+  echo
+  echo "❌ Rsync failed (exit code: $rsync_exit_code). Skipping deletion for safety."
+
+  # Cleanup temp file
+  if [[ -n "$temp_rsync_output" ]] && [[ "$temp_rsync_output" != "$logfile" ]]; then
+    rm -f "$temp_rsync_output"
+  fi
+fi
+
+echo
+echo "🎉 Sync operation completed!"
