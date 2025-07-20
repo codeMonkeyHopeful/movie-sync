@@ -1,12 +1,53 @@
 #!/bin/bash
 
 # === PARSE FLAGS ===
+debug=false
 enable_logging=false
 for arg in "$@"; do
   if [[ "$arg" == "--log" ]]; then
     enable_logging=true
   fi
+  if [[ "$arg" == "--debug" ]]; then
+    debug=true
+  fi
 done
+
+# === GLOBAL VARIABLE FOR LOCAL PATH MEMORY ===
+remembered_local_path=""
+
+# === PROMPT WITH DEFAULT FUNCTION ===
+prompt_with_default() {
+  local prompt_text="$1"
+  local default_value="$2"
+  local result_var="$3"
+
+  if [[ -n "$default_value" ]]; then
+    echo -n "$prompt_text [Press enter for: $default_value]: "
+  else
+    echo -n "$prompt_text: "
+  fi
+
+  read -r user_input
+
+  if [[ -z "$user_input" ]] && [[ -n "$default_value" ]]; then
+    eval "$result_var=\"$default_value\""
+  else
+    eval "$result_var=\"$user_input\""
+  fi
+}
+
+# === FUNCTION TO CHECK AND REMEMBER LOCAL PATH ===
+remember_local_path() {
+  local path="$1"
+
+  # Check if this looks like a local path (not remote with user@host: format)
+  if [[ ! "$path" =~ ^[^@]+@[^:]+: ]] && [[ -n "$path" ]]; then
+    if [[ -z "$remembered_local_path" ]]; then
+      remembered_local_path="$path"
+      echo "📝 Remembered local path: $remembered_local_path"
+    fi
+  fi
+}
 
 # === DEDUPE FUNCTION ===
 dedupe() {
@@ -34,7 +75,9 @@ analyze_rsync_output() {
     return 1
   fi
 
-  echo "🔍 Debug: Analyzing rsync output from: $rsync_output_file"
+  if [[ "$debug" == "true" ]] then
+    echo "🔍 Debug: Analyzing rsync output from: $rsync_output_file"
+  fi
 
   # Parse rsync output to identify successful vs failed transfers
   local in_file_list=false
@@ -69,6 +112,13 @@ analyze_rsync_output() {
     # Files with transfer info look like: "filename    size  100%  speed  time (xfr#n, to-chk=n/n)"
     # Directories look like: "dirname/"
     # Plain files without size info are just listed as: "filename"
+    # Transfer progress lines look like: "          1.66G  99%   15.44MB/s    0:00:00"
+
+    # Skip pure transfer progress lines (start with whitespace and contain only numbers/units/percentages)
+    if [[ "$line" =~ ^[[:space:]]+[0-9.,]+[KMGT]?[[:space:]]+[0-9]+%[[:space:]]+[0-9.,]+[KMGT]?B/s ]]; then
+      echo "⏭️ Skipping transfer progress line: $line"
+      continue
+    fi
 
     if [[ "$line" =~ ^[[:space:]]*(.+/)$ ]]; then
       # Directory entry (ends with /)
@@ -79,15 +129,15 @@ analyze_rsync_output() {
         successful_transfers+=("$filename")
         echo "📁 Found directory: $filename"
       fi
-    elif [[ "$line" =~ ^[[:space:]]*([^[:space:]]+.*[^/])$ ]] && [[ ! "$line" =~ "100%" ]]; then
-      # File entry without transfer stats (just filename)
+    elif [[ "$line" =~ ^[[:space:]]*([^[:space:]]+.*[^/])$ ]] && [[ ! "$line" =~ "100%" ]] && [[ ! "$line" =~ ^[[:space:]]+[0-9.,]+[KMGT]? ]]; then
+      # File entry without transfer stats (just filename) - but exclude lines that start with size info
       filename="${BASH_REMATCH[1]}"
       if [[ -n "$filename" && "$filename" != "./" && "$filename" != "." ]]; then
         successful_transfers+=("$filename")
         echo "📄 Found file: $filename"
       fi
-    elif [[ "$line" =~ ^[[:space:]]*([^[:space:]]+.+)[[:space:]]+[0-9.,]+[KMGT]?[[:space:]]+100% ]]; then
-      # File entry with transfer stats (has size and 100%)
+    elif [[ "$line" =~ ^([^[:space:]]+.+)[[:space:]]+[0-9.,]+[KMGT]?[[:space:]]+100% ]]; then
+      # File entry with transfer stats (has size and 100%) - filename comes first
       filename="${BASH_REMATCH[1]}"
       if [[ -n "$filename" && "$filename" != "./" && "$filename" != "." ]]; then
         successful_transfers+=("$filename")
@@ -96,16 +146,27 @@ analyze_rsync_output() {
     fi
   done < "$rsync_output_file"
 
-  echo "🔍 Debug: Found ${#successful_transfers[@]} successful transfers, ${#failed_transfers[@]} failures"
+  if [[ "$debug" == "true" ]] then
+    echo "🔍 Debug: Found ${#successful_transfers[@]} successful transfers, ${#failed_transfers[@]} failures"
+  fi
 
   # Export arrays for use in main script
   printf '%s\n' "${successful_transfers[@]}" > /tmp/successful_transfers.txt
-  printf '%s\n' "${failed_transfers[@]}" > /tmp/failed_transfers.txt
+
+  # Only create failed_transfers file if there are actually failures
+  if [[ ${#failed_transfers[@]} -gt 0 ]]; then
+    printf '%s\n' "${failed_transfers[@]}" > /tmp/failed_transfers.txt
+  else
+    # Remove any existing failed transfers file to ensure clean state
+    rm -f /tmp/failed_transfers.txt
+  fi
 
   # Debug output
-  if [[ ${#successful_transfers[@]} -gt 0 ]]; then
-    echo "🔍 Debug: Successful transfers written to /tmp/successful_transfers.txt:"
-    cat /tmp/successful_transfers.txt
+  if [[ "$debug" == "true" ]] then
+    if [[ ${#successful_transfers[@]} -gt 0 ]]; then
+      echo "🔍 Debug: Successful transfers written to /tmp/successful_transfers.txt:"
+      cat /tmp/successful_transfers.txt
+    fi
   fi
 }
 
@@ -180,7 +241,11 @@ delete_successful_files() {
   fi
 
   log_and_echo ""
-  log_and_echo "⚠️ Summary: $delete_count items deleted, $keep_count items kept due to failures."
+  if [[ $keep_count -gt 0 ]]; then
+    log_and_echo "⚠️ Summary: $delete_count items deleted, $keep_count items kept due to failures."
+  else
+    log_and_echo "✅ Summary: $delete_count items deleted successfully, no failures!"
+  fi
 
   # Cleanup temp files
   rm -f /tmp/successful_transfers.txt /tmp/failed_transfers.txt
@@ -191,7 +256,14 @@ echo
 read -rp "Run deduplication before syncing? [y/N]: " run_dedupe
 if [[ "$run_dedupe" =~ ^[Yy]$ ]]; then
   echo
-  read -rp "Enter path to dedupe (e.g. /mnt/hdd/Movies): " dedupe_path
+
+  # Use the remembered local path as default for dedupe prompt
+  dedupe_path=""
+  prompt_with_default "Enter path to dedupe (e.g. /mnt/hdd/Movies)" "$remembered_local_path" "dedupe_path"
+
+  # Remember this path if it's local and we don't have one yet
+  remember_local_path "$dedupe_path"
+
   read -rp "Dry run dedupe (no deletions)? [y/N]: " dedupe_dryrun
 
   dedupe_timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
@@ -246,23 +318,40 @@ read -rp "Choose an option [1 or 2]: " choice
 if [[ "$choice" == "1" ]]; then
   echo
   echo "You chose to PUSH files to the server."
-  read -rp "Enter the full LOCAL source path: " source_path
+
+  # Use remembered local path as default for source path
+  source_path=""
+  prompt_with_default "Enter the full LOCAL source path" "$remembered_local_path" "source_path"
+
+  # Remember this path since it's local
+  remember_local_path "$source_path"
+
   # Auto-adjust trailing slash for directories (rsync behavior optimization)
   if [[ -d "$source_path" ]] && [[ "$source_path" != */ ]]; then
     source_path="$source_path/"
     echo "📁 Detected directory - adjusted path to: $source_path"
+    remember_local_path "$source_path"
   fi
+
   read -rp "Enter the REMOTE destination path (e.g. user@192.168.0.99:/mnt/hdd/): " destination_path
 
 elif [[ "$choice" == "2" ]]; then
   echo
   echo "You chose to PULL files from the server."
   read -rp "Enter the REMOTE source path (e.g. user@192.168.0.100:/home/jasin/Movies/): " source_path
-  read -rp "Enter the LOCAL destination path: " destination_path
+
+  # Use remembered local path as default for destination path
+  destination_path=""
+  prompt_with_default "Enter the LOCAL destination path" "$remembered_local_path" "destination_path"
+
+  # Remember this path since it's local
+  remember_local_path "$destination_path"
+
   # Auto-adjust trailing slash for local destination directories
   if [[ -d "$destination_path" ]] && [[ "$destination_path" != */ ]]; then
     destination_path="$destination_path/"
     echo "📁 Detected directory - adjusted path to: $destination_path"
+    remember_local_path "$destination_path"
   fi
 
 else
@@ -354,9 +443,11 @@ fi
 rsync_args+=("$source_path" "$destination_path")
 
 # Debug output
-echo "Debug info:"
-printf "rsync_args: '%s'\n" "${rsync_args[@]}"
-echo
+if [[ "$debug" == "true" ]] then
+  echo "Debug info:"
+  printf "rsync_args: '%s'\n" "${rsync_args[@]}"
+  echo
+fi
 
 # === EXECUTE SYNC ===
 rsync_exit_code=0
