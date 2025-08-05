@@ -4,7 +4,7 @@
 
 A bash script to **deduplicate** and **sync** directories between local and remote machines. Easy UI in the terminal to simplify user transfers.
 
-**Bonus**: Includes [optional media formatter](#media-formatter-bonus-tool) for clean file naming!
+**Bonus**: Includes [optional media formatter](#media-formatter-bonus-tool) for clean file naming with **dry run support**!
 
 **Do you**
 
@@ -23,6 +23,7 @@ Well strap in because Movie Sync has got you covered!
 - Sync files **to** or **from** a remote server using `rsync` with optional dry-run, sudo on remote, background execution, and logging
 - **NEW**: Automatically delete original files after successful transfer (with smart failure detection)
 - **NEW**: Intelligent transfer analysis - only deletes files that were successfully transferred
+- **NEW**: Media formatter with dry run support - preview changes before applying
 - All functionality combined in a single interactive script
 - Logging for both deduplication and sync controlled by a single `--log` CLI flag
 
@@ -47,10 +48,17 @@ Make the script executable:
 chmod +x movie-sync.sh
 ```
 
-**Optional**: Format your media files first:
+**Optional**: Format your media files first with dry run preview:
 
 ```bash
-python3 format.py
+# Preview changes without modifying files
+python3 file_formatter.py --dry-run /path/to/movies
+
+# Apply changes after reviewing dry run
+python3 file_formatter.py /path/to/movies
+
+# Interactive mode (original behavior)
+python3 file_formatter.py
 ```
 
 Run the main script:
@@ -113,10 +121,14 @@ If logging is enabled with `--log`:
 
 ## Example
 
-**Format media files first (optional):**
+**Format media files first with dry run preview (optional):**
 
 ```bash
-python3 format.py
+# First, preview what changes would be made
+python3 file_formatter.py --dry-run /mnt/hdd/Movies
+
+# After reviewing, apply the changes
+python3 file_formatter.py /mnt/hdd/Movies
 ```
 
 **Then run with logging enabled:**
@@ -143,6 +155,23 @@ Run in background with nohup? [Y/n]: n
 ---
 
 ## Screenshots
+
+**Media Formatter Dry Run Preview:**
+
+```
+🎬 Processing Jellyfin Media Directory: /mnt/movies [DRY RUN MODE]
+============================================================
+├── [DRY RUN] 📝 Rename: Awesome.Action.Flick.2022.1080p.WEBRip → Awesome Action Flick (2022)
+│   └── [DRY RUN] 🎥 Rename: Awesome.Action.Flick.2022.1080p.WEBRip.mp4 → Awesome Action Flick (2022).mp4
+│   [DRY RUN] 📝 Rename: Awesome.Action.Flick.2022.srt → Awesome Action Flick (2022).srt
+│   [DRY RUN] 🗑️  Delete: sample.txt -> DELETE
+└── [DRY RUN] ⚠️  Found truncated year (20) - using 2020 as default
+    [DRY RUN] 📝 Rename: Comedy.Special.(20) → Comedy Special (2020)
+    └── [DRY RUN] 🎥 Rename: Comedy.Special.(20).mkv → Comedy Special (2020).mkv
+
+🔍 DRY RUN COMPLETED!
+No files were actually modified. Run without --dry-run to apply changes.
+```
 
 **Media Formatter in Action:**
 
@@ -183,7 +212,7 @@ Run in background with nohup? [Y/n]: n
 
 **🎬 Format your media files to standard naming convention before syncing!**
 
-We've included an optional Python script `format.py` that formats your movie files and folders to the standard media naming convention: `Title (Year)`. This is super helpful to run **before** using the main sync script to ensure your media library is properly organized.
+We've included an optional Python script `file_formatter.py` that formats your movie files and folders to the standard media naming convention: `Title (Year)`. This is super helpful to run **before** using the main sync script to ensure your media library is properly organized.
 
 ### What it does:
 
@@ -193,16 +222,53 @@ We've included an optional Python script `format.py` that formats your movie fil
 - ✅ Removes unwanted files (`.txt`, `.url`, `.jpg`, etc.)
 - ✅ Cleans up release group tags (`[YTS]`, `[RARBG]`, etc.)
 - ✅ Shows a nice tree view of changes being made
+- ✅ **NEW**: Dry run support to preview changes before applying them
+- ✅ **NEW**: Colored output with clear action indicators
 
-### Quick usage:
+### Usage Options:
 
+**Command Line Usage (Recommended):**
 ```bash
-python3 format.py
+# Preview changes with dry run (safe - no files modified)
+python3 file_formatter.py --dry-run /path/to/movies
+python3 file_formatter.py -n /path/to/movies
+
+# Apply changes after reviewing dry run
+python3 file_formatter.py /path/to/movies
+
+# Get help
+python3 file_formatter.py --help
 ```
 
-Then enter your media directory path and confirm. The script will show you exactly what it's going to change before doing it.
+**Interactive Mode:**
+```bash
+# Original interactive mode (prompts for directory)
+python3 file_formatter.py
+```
 
-**Tip**: Run this on your media files first, then use the main sync script to transfer your nicely formatted collection!
+### Dry Run Features:
+
+- **Safe Preview**: See exactly what would change without modifying any files
+- **Color-Coded Actions**: 
+  - 🟢 **Green arrows** (`->`) for renames/moves
+  - 🔴 **Red arrows** (`->`) for deletions with red "DELETE" text
+- **Clear Indicators**: All dry run actions are prefixed with `[DRY RUN]`
+- **No Confirmation Required**: Dry runs are completely safe and don't need user confirmation
+
+### Example Workflow:
+
+```bash
+# Step 1: Preview what would change
+python3 file_formatter.py --dry-run /mnt/movies
+
+# Step 2: Review the output, then apply changes
+python3 file_formatter.py /mnt/movies
+
+# Step 3: Sync with the main script
+./movie-sync.sh --log
+```
+
+**Tip**: Always run with `--dry-run` first to see what changes would be made, then run without the flag to apply them!
 
 ---
 
@@ -213,6 +279,7 @@ Then enter your media directory path and confirm. The script will show you exact
 - **Push-Only Deletion**: Deletion only works for push operations (local → remote) to prevent accidental data loss
 - **Failure Detection**: Files that fail to transfer are kept on the local machine
 - **Detailed Logging**: All deletion operations are logged when logging is enabled
+- **Media Formatter Safety**: Dry run mode lets you preview all formatting changes before applying
 
 ---
 
